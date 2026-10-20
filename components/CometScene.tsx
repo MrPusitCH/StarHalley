@@ -2,83 +2,154 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const DEFAULT_SRC = "/music/halley.mp3";
-const SONG_QUERY = encodeURIComponent("fellow fellow ดาวหางฮัลเลย์");
-const YOUTUBE_URL = `https://www.youtube.com/results?search_query=${SONG_QUERY}`;
-const SPOTIFY_URL = `https://open.spotify.com/search/${SONG_QUERY}`;
+const SPOTIFY_TRACK_ID = "56wDFSIa9Tr7zbEXUVMwjP";
+const SPOTIFY_URL = `https://open.spotify.com/track/${SPOTIFY_TRACK_ID}`;
+const YOUTUBE_URL = `https://www.youtube.com/results?search_query=${encodeURIComponent("fellow fellow ดาวหางฮัลเลย์")}`;
+// Spotify doesn't expose its audio to other pages, so the scene follows a simulated beat
+const BEAT_SECONDS = 0.78;
+
+type SpotifyController = {
+  play: () => void;
+  pause: () => void;
+  togglePlay: () => void;
+  destroy: () => void;
+  addListener: (event: string, cb: (e: { data: { isPaused: boolean; position: number; duration: number } }) => void) => void;
+};
+type SpotifyIFrameAPI = {
+  createController: (
+    el: HTMLElement,
+    options: { uri: string; width?: string | number; height?: string | number },
+    cb: (controller: SpotifyController) => void,
+  ) => void;
+};
+declare global {
+  interface Window {
+    onSpotifyIframeApiReady?: (api: SpotifyIFrameAPI) => void;
+    __spotifyIFrameAPI?: SpotifyIFrameAPI;
+  }
+}
+
+function loadSpotifyIFrameAPI(): Promise<SpotifyIFrameAPI> {
+  if (window.__spotifyIFrameAPI) return Promise.resolve(window.__spotifyIFrameAPI);
+  return new Promise((resolve) => {
+    const prev = window.onSpotifyIframeApiReady;
+    window.onSpotifyIframeApiReady = (api) => {
+      window.__spotifyIFrameAPI = api;
+      prev?.(api);
+      resolve(api);
+    };
+    if (!document.querySelector('script[src*="embed/iframe-api"]')) {
+      const script = document.createElement("script");
+      script.src = "https://open.spotify.com/embed/iframe-api/v1";
+      script.async = true;
+      document.body.appendChild(script);
+    }
+  });
+}
+
+const STORY: { text: string; accent?: boolean }[] = [
+  { text: "คืนนี้ท้องฟ้าเงียบกว่าทุกคืน" },
+  { text: "แต่ในใจคุณ… กลับไม่เงียบเลย" },
+  { text: "คุณกำลังคิดถึงใครบางคนอยู่ละสิ", accent: true },
+  { text: "ใครสักคน ที่ทำให้คืนธรรมดา ดูสว่างขึ้นมา" },
+  { text: "ถ้าคิดถึงเขา… ลองมองขึ้นไปบนฟ้าดูสิ" },
+];
+const STORY_LINE_MS = 3600;
 
 type Star = { x: number; y: number; r: number; phase: number; speed: number; hue: number };
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number };
 type Meteor = { x: number; y: number; vx: number; vy: number; life: number };
 
-function formatTime(sec: number) {
-  if (!Number.isFinite(sec) || sec < 0) return "0:00";
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
 export default function CometScene() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
+  const embedHostRef = useRef<HTMLDivElement>(null);
+  const controllerRef = useRef<SpotifyController | null>(null);
+  const playingRef = useRef(false);
+  const wantPlayRef = useRef(false);
 
   const [playing, setPlaying] = useState(false);
-  const [current, setCurrent] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [missing, setMissing] = useState(false);
+  const [needsTap, setNeedsTap] = useState(false);
   const [intro, setIntro] = useState<"show" | "leaving" | "gone">("show");
+  const [storyIdx, setStoryIdx] = useState<number | null>(null);
+  const [revealed, setRevealed] = useState(false);
+  const revealedRef = useRef(false);
 
-  // ---------- Audio ----------
-  const ensureAudioGraph = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio || audioCtxRef.current) return;
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new Ctx();
-    const source = ctx.createMediaElementSource(audio);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.82;
-    source.connect(analyser);
-    analyser.connect(ctx.destination);
-    audioCtxRef.current = ctx;
-    analyserRef.current = analyser;
+  // ---------- Spotify ----------
+  useEffect(() => {
+    let cancelled = false;
+    const host = embedHostRef.current;
+    if (!host) return;
+    loadSpotifyIFrameAPI().then((api) => {
+      if (cancelled) return;
+      const el = document.createElement("div");
+      host.appendChild(el);
+      api.createController(el, { uri: `spotify:track:${SPOTIFY_TRACK_ID}`, width: "100%", height: 80 }, (controller) => {
+        if (cancelled) {
+          controller.destroy();
+          return;
+        }
+        controllerRef.current = controller;
+        controller.addListener("ready", () => {
+          if (wantPlayRef.current) controller.play();
+        });
+        controller.addListener("playback_update", (e) => {
+          const isPlaying = !e.data.isPaused;
+          playingRef.current = isPlaying;
+          setPlaying(isPlaying);
+          if (isPlaying) setNeedsTap(false);
+        });
+      });
+    });
+    return () => {
+      cancelled = true;
+      controllerRef.current?.destroy();
+      controllerRef.current = null;
+      host.innerHTML = "";
+    };
   }, []);
 
-  const startMusic = useCallback(async () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    ensureAudioGraph();
-    if (audioCtxRef.current?.state === "suspended") await audioCtxRef.current.resume();
-    try {
-      await audio.play();
-      setMissing(false);
-    } catch {
-      setMissing(true);
-    }
-  }, [ensureAudioGraph]);
+  const startMusic = useCallback(() => {
+    wantPlayRef.current = true;
+    controllerRef.current?.play();
+    // If the browser blocks autoplay inside the embed, ask for one tap on Spotify's own button
+    window.setTimeout(() => {
+      if (!playingRef.current) setNeedsTap(true);
+    }, 3500);
+  }, []);
 
   const togglePlay = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (audio.paused) startMusic();
-    else audio.pause();
+    const controller = controllerRef.current;
+    if (!controller) return;
+    if (playingRef.current) controller.pause();
+    else startMusic();
   }, [startMusic]);
 
   const enterScene = useCallback(() => {
     if (intro !== "show") return;
     setIntro("leaving");
     window.setTimeout(() => setIntro("gone"), 1400);
-    startMusic();
-  }, [intro, startMusic]);
+    window.setTimeout(() => setStoryIdx(0), 900);
+  }, [intro]);
 
-  const onSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = Number(e.target.value);
-    setCurrent(audio.currentTime);
-  };
+  const reveal = useCallback(() => {
+    if (revealedRef.current) return;
+    revealedRef.current = true;
+    setStoryIdx(null);
+    setRevealed(true);
+    startMusic();
+  }, [startMusic]);
+
+  const lastLine = storyIdx === STORY.length - 1;
+
+  const advanceStory = useCallback(() => {
+    setStoryIdx((i) => (i === null || i >= STORY.length - 1 ? i : i + 1));
+  }, []);
+
+  useEffect(() => {
+    if (storyIdx === null || storyIdx >= STORY.length - 1) return;
+    const t = window.setTimeout(advanceStory, STORY_LINE_MS);
+    return () => window.clearTimeout(t);
+  }, [storyIdx, advanceStory]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -87,20 +158,24 @@ export default function CometScene() {
         enterScene();
         return;
       }
-      if (e.code === "Space" && (e.target as HTMLElement)?.tagName !== "INPUT") {
+      if (storyIdx !== null) {
+        if (e.code === "Space" || e.code === "Enter") {
+          e.preventDefault();
+          if (lastLine) reveal();
+          else advanceStory();
+        } else if (e.code === "Escape") {
+          reveal();
+        }
+        return;
+      }
+      if (e.code === "Space" && revealedRef.current) {
         e.preventDefault();
         togglePlay();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePlay, enterScene, intro]);
-
-  useEffect(() => {
-    return () => {
-      audioCtxRef.current?.close();
-    };
-  }, []);
+  }, [togglePlay, enterScene, intro, storyIdx, lastLine, reveal, advanceStory]);
 
   // ---------- Scene ----------
   useEffect(() => {
@@ -123,7 +198,7 @@ export default function CometScene() {
     let treble = 0;
     let raf = 0;
     let last = performance.now();
-    let cometT = 0.08;
+    let cometT = -0.1;
     let cometSpeed = 0.016;
     let smoothEnergy = 0;
     const trail: { x: number; y: number }[] = [];
@@ -182,18 +257,28 @@ export default function CometScene() {
       return { x, y };
     };
 
-    const readAudio = () => {
-      const analyser = analyserRef.current;
-      const audio = audioRef.current;
-      if (analyser && audio && !audio.paused) {
-        analyser.getByteFrequencyData(freq);
+    const readAudio = (time: number) => {
+      if (playingRef.current) {
+        // Simulated spectrum: a soft kick on every beat, a swaying mid range and shimmering highs
+        const phase = (time % BEAT_SECONDS) / BEAT_SECONDS;
+        const kick = Math.exp(-phase * 5);
+        const bar = Math.floor(time / (BEAT_SECONDS * 4));
+        const swell = 0.55 + 0.45 * Math.sin(time * 0.35 + bar * 0.9);
+        for (let i = 0; i < freq.length; i++) {
+          const f = i / freq.length;
+          const low = kick * Math.exp(-f * 18) * 1.1;
+          const midBand = swell * 0.6 * Math.exp(-((f - 0.25) ** 2) / 0.06) * (0.75 + 0.25 * Math.sin(time * 3.1 + i * 0.7));
+          const high = 0.42 * Math.exp(-f * 1.8) * (0.5 + 0.5 * Math.sin(time * 7.3 + i * 1.9)) * (0.6 + kick * 0.4);
+          const target = Math.min(1, low + midBand + high) * 255;
+          freq[i] += (target - freq[i]) * 0.35;
+        }
       } else {
         for (let i = 0; i < freq.length; i++) freq[i] *= 0.92;
       }
       const avg = (a: number, b: number) => {
-        let s = 0;
-        for (let i = a; i < b; i++) s += freq[i];
-        return s / (b - a) / 255;
+        let sum = 0;
+        for (let i = a; i < b; i++) sum += freq[i];
+        return sum / (b - a) / 255;
       };
       bass += (avg(0, 6) - bass) * 0.25;
       mid += (avg(6, 40) - mid) * 0.2;
@@ -204,7 +289,7 @@ export default function CometScene() {
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       const time = now / 1000;
-      readAudio();
+      readAudio(time);
       const energy = bass * 0.5 + mid * 0.35 + treble * 0.15;
 
       // Sky
@@ -288,7 +373,7 @@ export default function CometScene() {
       smoothEnergy += (energy - smoothEnergy) * Math.min(1, dt * 1.5);
       const targetSpeed = 0.014 + smoothEnergy * 0.018;
       cometSpeed += (targetSpeed - cometSpeed) * Math.min(1, dt * 0.8);
-      cometT += dt * cometSpeed;
+      if (revealedRef.current) cometT += dt * cometSpeed;
       if (cometT > 1.1) {
         cometT = -0.1;
         trail.length = 0;
@@ -390,7 +475,7 @@ export default function CometScene() {
       for (let i = 0; i < bars; i++) {
         const idx = Math.floor((Math.abs(i - bars / 2) / (bars / 2)) * 90);
         const v = freq[idx] / 255;
-        const bh = v * h * 0.28;
+        const bh = v * h * 0.5;
         const g = ctx.createLinearGradient(0, h, 0, h - bh - h * 0.1);
         g.addColorStop(0, `hsla(${200 + v * 120}, 90%, 65%, ${0.05 + v * 0.35})`);
         g.addColorStop(1, `hsla(${200 + v * 120}, 90%, 65%, 0)`);
@@ -416,7 +501,7 @@ export default function CometScene() {
   }, []);
 
   return (
-    <main className="scene">
+    <main className={`scene ${revealed ? "is-revealed" : "is-story"}`}>
       <canvas ref={canvasRef} className="sky" aria-hidden />
 
       <header className="title">
@@ -425,49 +510,14 @@ export default function CometScene() {
         <p className="artist">fellow fellow</p>
       </header>
 
-      <section className="player" aria-label="เครื่องเล่นเพลง">
-        <button
-          className={`play ${playing ? "is-playing" : ""}`}
-          onClick={togglePlay}
-          aria-label={playing ? "หยุดชั่วคราว" : "เล่นเพลง"}
-        >
-          {playing ? (
-            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden>
-              <rect x="6" y="5" width="4" height="14" rx="1.2" fill="currentColor" />
-              <rect x="14" y="5" width="4" height="14" rx="1.2" fill="currentColor" />
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden>
-              <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" fill="currentColor" />
-            </svg>
-          )}
-        </button>
-
-        <div className="track">
-          <div className="track-name">ดาวหางฮัลเลย์ — fellow fellow</div>
-          <input
-            type="range"
-            className="seek"
-            min={0}
-            max={duration || 0}
-            step={0.1}
-            value={current}
-            onChange={onSeek}
-            disabled={!duration}
-            aria-label="ตำแหน่งเพลง"
-            style={{ ["--p" as string]: `${duration ? (current / duration) * 100 : 0}%` }}
-          />
-          <div className="times">
-            <span>{formatTime(current)}</span>
-            <span>{formatTime(duration)}</span>
-          </div>
-        </div>
+      <section className={`player ${playing ? "is-playing" : ""}`} aria-label="เครื่องเล่นเพลง Spotify">
+        <div ref={embedHostRef} className="embed" />
       </section>
 
       <footer className="credit">
         <span>
           เพลง <b>ดาวหางฮัลเลย์</b> — <b>fellow fellow</b> · ลิขสิทธิ์เพลงเป็นของศิลปินและต้นสังกัด
-          เว็บนี้ไม่ได้แจกจ่ายไฟล์เพลง
+          · เล่นผ่าน Spotify
         </span>
         <span className="credit-links">
           ฟังเพลงต้นฉบับ:{" "}
@@ -481,10 +531,37 @@ export default function CometScene() {
         </span>
       </footer>
 
-      {missing && (
-        <p className="hint">
-          ยังไม่พบไฟล์เพลง — วางไฟล์ไว้ที่ <code>public/music/halley.mp3</code>
-        </p>
+      {needsTap && intro === "gone" && (
+        <p className="hint">กดปุ่ม ▶ บนการ์ด Spotify ด้านล่างเพื่อเริ่มเพลง</p>
+      )}
+
+      {storyIdx !== null && (
+        <div className="story" onClick={lastLine ? undefined : advanceStory}>
+          <p key={storyIdx} className={`story-line ${STORY[storyIdx].accent ? "is-accent" : ""}`}>
+            {STORY[storyIdx].text}
+          </p>
+          {lastLine && (
+            <button className="story-go" onClick={reveal}>
+              มองขึ้นไปบนฟ้า ✦
+            </button>
+          )}
+          <div className="story-dots" aria-hidden>
+            {STORY.map((_, i) => (
+              <span key={i} className={i <= storyIdx ? "on" : ""} />
+            ))}
+          </div>
+          {!lastLine && (
+            <button
+              className="story-skip"
+              onClick={(e) => {
+                e.stopPropagation();
+                reveal();
+              }}
+            >
+              ข้าม →
+            </button>
+          )}
+        </div>
       )}
 
       {intro !== "gone" && (
@@ -512,21 +589,6 @@ export default function CometScene() {
           <p className="intro-tap">แตะเพื่อเริ่ม</p>
         </div>
       )}
-
-      <audio
-        ref={audioRef}
-        src={DEFAULT_SRC}
-        preload="metadata"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-        onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => {
-          setDuration(e.currentTarget.duration);
-          setMissing(false);
-        }}
-        onError={() => setMissing(true)}
-      />
     </main>
   );
 }
