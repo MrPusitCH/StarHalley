@@ -1,0 +1,8 @@
+node_modules
+.next
+next-env.d.ts
+*.tsbuildinfo
+.claude
+public/music/*.mp3
+public/music/*.m4a
+public/music/*.wav
