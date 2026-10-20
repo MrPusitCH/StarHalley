@@ -65,7 +65,7 @@ body {
 .player {
   position: absolute;
   left: 50%;
-  bottom: clamp(20px, 6vh, 56px);
+  bottom: clamp(56px, 9vh, 84px);
   transform: translateX(-50%);
   width: min(560px, calc(100% - 32px));
   display: flex;
@@ -168,7 +168,7 @@ body {
 .hint {
   position: absolute;
   left: 50%;
-  bottom: calc(clamp(20px, 6vh, 56px) + 100px);
+  bottom: calc(clamp(56px, 9vh, 84px) + 100px);
   transform: translateX(-50%);
   width: min(560px, calc(100% - 32px));
   text-align: center;
@@ -185,8 +185,41 @@ body {
 
 @media (max-width: 520px) {
   .hint {
-    bottom: calc(clamp(20px, 6vh, 56px) + 100px);
+    bottom: calc(clamp(56px, 9vh, 84px) + 100px);
   }
+}
+
+.credit {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  width: calc(100% - 32px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 12px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 300;
+  line-height: 1.5;
+  color: rgba(210, 220, 255, 0.55);
+}
+
+.credit b {
+  font-weight: 400;
+  color: rgba(230, 236, 255, 0.8);
+}
+
+.credit a {
+  color: #a9d6ff;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(169, 214, 255, 0.35);
+}
+
+.credit a:hover {
+  color: #ff9bd2;
+  border-color: rgba(255, 155, 210, 0.6);
 }
 
 /* ---------- Intro (Pma.Dev) ---------- */

@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const DEFAULT_SRC = "/music/halley.mp3";
+const SONG_QUERY = encodeURIComponent("fellow fellow ดาวหางฮัลเลย์");
+const YOUTUBE_URL = `https://www.youtube.com/results?search_query=${SONG_QUERY}`;
+const SPOTIFY_URL = `https://open.spotify.com/search/${SONG_QUERY}`;
 
 type Star = { x: number; y: number; r: number; phase: number; speed: number; hue: number };
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number };
@@ -460,6 +463,23 @@ export default function CometScene() {
           </div>
         </div>
       </section>
+
+      <footer className="credit">
+        <span>
+          เพลง <b>ดาวหางฮัลเลย์</b> — <b>fellow fellow</b> · ลิขสิทธิ์เพลงเป็นของศิลปินและต้นสังกัด
+          เว็บนี้ไม่ได้แจกจ่ายไฟล์เพลง
+        </span>
+        <span className="credit-links">
+          ฟังเพลงต้นฉบับ:{" "}
+          <a href={YOUTUBE_URL} target="_blank" rel="noopener noreferrer">
+            YouTube
+          </a>{" "}
+          ·{" "}
+          <a href={SPOTIFY_URL} target="_blank" rel="noopener noreferrer">
+            Spotify
+          </a>
+        </span>
+      </footer>
 
       {missing && (
         <p className="hint">
